@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Background -->
+  <rect width="1024" height="1024" fill="#2563eb"/>
+
+  <!-- Anchor icon -->
+  <g transform="translate(512, 512)">
+    <!-- Main vertical shaft -->
+    <rect x="-30" y="-280" width="60" height="400" rx="10" fill="white"/>
+
+    <!-- Horizontal bar at top -->
+    <rect x="-150" y="-280" width="300" height="50" rx="10" fill="white"/>
+
+    <!-- Ring at top -->
+    <circle cx="0" cy="-350" r="60" fill="none" stroke="white" stroke-width="40"/>
+
+    <!-- Curved bottom (flukes) -->
+    <path d="M -200,120 Q -200,280 0,280 Q 200,280 200,120"
+          fill="none" stroke="white" stroke-width="50" stroke-linecap="round"/>
+
+    <!-- Arrow points at bottom of flukes -->
+    <polygon points="-220,100 -200,180 -150,100" fill="white"/>
+    <polygon points="220,100 200,180 150,100" fill="white"/>
+
+    <!-- Small horizontal bar near bottom of shaft -->
+    <rect x="-80" y="40" width="160" height="40" rx="8" fill="white"/>
+  </g>
+
+  <!-- App name text -->
+  <text x="512" y="880"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="80"
+        font-weight="bold"
+        fill="white"
+        text-anchor="middle">DOCKLOGGER</text>
+</svg>

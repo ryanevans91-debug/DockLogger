@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Background -->
+  <rect width="1024" height="1024" fill="#2563eb"/>
+
+  <!-- Anchor icon - centered -->
+  <g transform="translate(512, 512)">
+    <!-- Main vertical shaft -->
+    <rect x="-35" y="-250" width="70" height="380" rx="12" fill="white"/>
+
+    <!-- Horizontal bar at top -->
+    <rect x="-160" y="-250" width="320" height="55" rx="12" fill="white"/>
+
+    <!-- Ring at top -->
+    <circle cx="0" cy="-320" r="65" fill="none" stroke="white" stroke-width="45"/>
+
+    <!-- Curved bottom (flukes) -->
+    <path d="M -220,130 Q -220,300 0,300 Q 220,300 220,130"
+          fill="none" stroke="white" stroke-width="55" stroke-linecap="round"/>
+
+    <!-- Arrow points at bottom of flukes -->
+    <polygon points="-240,110 -220,195 -160,110" fill="white"/>
+    <polygon points="240,110 220,195 160,110" fill="white"/>
+
+    <!-- Small horizontal bar near bottom of shaft -->
+    <rect x="-90" y="50" width="180" height="45" rx="10" fill="white"/>
+  </g>
+</svg>
