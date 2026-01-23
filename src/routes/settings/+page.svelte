@@ -2,12 +2,14 @@
 	import { user, ratedJobs, theme, colorThemes, type ThemeMode, type ColorTheme, entries } from '$lib/stores';
 	import { SHIFTS } from '$lib/db';
 	import { goto } from '$app/navigation';
+	import { parseTimesheetWithGemini, testGeminiConnection, getGeminiApiKey, type ParsedTimesheetEntry } from '$lib/utils/gemini';
 
 	// Import modal state
 	let showImportModal = $state(false);
-	let importedData = $state<Array<{date: string; shift_type: string; hours: number; job_name: string; earnings?: number}>>([]);
+	let importedData = $state<Array<{date: string; shift_type: string; hours: number; job_name: string; earnings?: number; location?: string; ship?: string}>>([]);
 	let importFileName = $state('');
 	let importing = $state(false);
+	let parsingWithAI = $state(false);
 
 	// Form state - populated from user store
 	let lastName = $state($user?.last_name || '');
@@ -21,6 +23,7 @@
 	let graveyardRate = $state<number | null>($user?.graveyard_rate || null);
 	let averageHoursTarget = $state($user?.average_hours_target || 600);
 	let pensionTarget = $state<number | null>($user?.pension_target || null);
+	let geminiApiKey = $state($user?.gemini_api_key || '');
 
 	// Update local state when user store changes
 	$effect(() => {
@@ -36,6 +39,7 @@
 			graveyardRate = $user.graveyard_rate;
 			averageHoursTarget = $user.average_hours_target;
 			pensionTarget = $user.pension_target;
+			geminiApiKey = $user.gemini_api_key || '';
 		}
 	});
 
@@ -63,7 +67,8 @@
 				afternoon_rate: afternoonRate,
 				graveyard_rate: graveyardRate,
 				average_hours_target: averageHoursTarget,
-				pension_target: pensionTarget
+				pension_target: pensionTarget,
+				gemini_api_key: geminiApiKey.trim() || null
 			});
 
 			alert('Profile saved!');
@@ -119,30 +124,65 @@
 		if (!file) return;
 
 		importFileName = file.name;
+		const isImage = file.type.startsWith('image/');
+		const isPdf = file.type === 'application/pdf';
+		const isCsv = file.name.endsWith('.csv');
+
+		// Check if we have Gemini API key for non-CSV files
+		const apiKey = getGeminiApiKey(geminiApiKey);
+		if ((isImage || isPdf) && !apiKey) {
+			alert('Please add your Gemini API key in settings to import images and PDFs. You can get a free key from Google AI Studio.');
+			input.value = '';
+			return;
+		}
 
 		// Read file content
 		const reader = new FileReader();
 		reader.onload = async (e) => {
-			const content = e.target?.result as string;
+			try {
+				if (isCsv) {
+					// Parse CSV directly
+					const content = e.target?.result as string;
+					importedData = parseCSV(content);
+				} else if (isImage || isPdf) {
+					// Use Gemini to parse image/PDF
+					parsingWithAI = true;
+					const base64 = e.target?.result as string;
 
-			// Parse based on file type
-			if (file.name.endsWith('.csv')) {
-				importedData = parseCSV(content);
-			} else {
-				// For PDF/images, we'd need OCR - for now show placeholder
-				importedData = [];
-				alert('PDF and image parsing requires OCR integration. CSV files can be imported directly.');
-				return;
-			}
+					const result = await parseTimesheetWithGemini(apiKey, null, base64);
 
-			// Show verification modal if we got data
-			if (importedData.length > 0) {
-				showImportModal = true;
-			} else {
-				alert('No valid timesheet data found in file.');
+					if (result.success && Array.isArray(result.data)) {
+						importedData = result.data as ParsedTimesheetEntry[];
+					} else {
+						alert(result.error || 'Failed to parse file with AI. Please try a clearer image or CSV format.');
+						parsingWithAI = false;
+						return;
+					}
+					parsingWithAI = false;
+				} else {
+					alert('Unsupported file type. Please use CSV, PDF, or image files.');
+					return;
+				}
+
+				// Show verification modal if we got data
+				if (importedData.length > 0) {
+					showImportModal = true;
+				} else {
+					alert('No valid timesheet data found in file.');
+				}
+			} catch (error) {
+				console.error('Import error:', error);
+				alert('Failed to parse file. Please try again.');
+				parsingWithAI = false;
 			}
 		};
-		reader.readAsText(file);
+
+		// Read as appropriate format
+		if (isImage || isPdf) {
+			reader.readAsDataURL(file);
+		} else {
+			reader.readAsText(file);
+		}
 
 		// Reset input
 		input.value = '';
@@ -539,18 +579,23 @@
 		<h2 class="text-lg font-semibold text-gray-900 mb-3">Data</h2>
 		<div class="space-y-3">
 			<!-- Import Data -->
-			<label class="card w-full text-left flex items-center gap-3 cursor-pointer hover:bg-gray-50 transition-colors">
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-blue-500">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-				</svg>
+			<label class="card w-full text-left flex items-center gap-3 cursor-pointer hover:bg-gray-50 transition-colors {parsingWithAI ? 'opacity-50 pointer-events-none' : ''}">
+				{#if parsingWithAI}
+					<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+				{:else}
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-blue-500">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+					</svg>
+				{/if}
 				<div class="flex-1">
-					<p class="font-medium text-gray-900">Import Timesheets</p>
-					<p class="text-sm text-gray-500">Upload CSV, PDF, or images from other apps</p>
+					<p class="font-medium text-gray-900">{parsingWithAI ? 'Parsing with AI...' : 'Import Timesheets'}</p>
+					<p class="text-sm text-gray-500">{parsingWithAI ? 'Extracting timesheet data' : 'Upload CSV, PDF, or images from other apps'}</p>
 				</div>
 				<input
 					type="file"
 					accept=".csv,.pdf,image/*"
 					onchange={handleFileImport}
+					disabled={parsingWithAI}
 					class="hidden"
 				/>
 			</label>

@@ -10,19 +10,22 @@ export const userQueries = {
 
   async create(user: Omit<User, 'id' | 'created_at'>): Promise<number> {
     const result = await database.run(
-      `INSERT INTO user (last_name, first_initial, man_number, current_board, day_rate, afternoon_rate, graveyard_rate, average_hours_target, pension_target, career_hours)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO user (last_name, first_name, man_number, current_board, file_number, work_pin, day_rate, afternoon_rate, graveyard_rate, average_hours_target, pension_target, career_hours, gemini_api_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         user.last_name,
-        user.first_initial,
+        user.first_name,
         user.man_number,
         user.current_board,
+        user.file_number,
+        user.work_pin,
         user.day_rate,
         user.afternoon_rate,
         user.graveyard_rate,
         user.average_hours_target,
         user.pension_target,
-        user.career_hours
+        user.career_hours,
+        user.gemini_api_key
       ]
     );
     return result.lastId;
@@ -36,9 +39,9 @@ export const userQueries = {
       fields.push('last_name = ?');
       values.push(user.last_name);
     }
-    if (user.first_initial !== undefined) {
-      fields.push('first_initial = ?');
-      values.push(user.first_initial);
+    if (user.first_name !== undefined) {
+      fields.push('first_name = ?');
+      values.push(user.first_name);
     }
     if (user.man_number !== undefined) {
       fields.push('man_number = ?');
@@ -47,6 +50,14 @@ export const userQueries = {
     if (user.current_board !== undefined) {
       fields.push('current_board = ?');
       values.push(user.current_board);
+    }
+    if (user.file_number !== undefined) {
+      fields.push('file_number = ?');
+      values.push(user.file_number);
+    }
+    if (user.work_pin !== undefined) {
+      fields.push('work_pin = ?');
+      values.push(user.work_pin);
     }
     if (user.day_rate !== undefined) {
       fields.push('day_rate = ?');
@@ -71,6 +82,10 @@ export const userQueries = {
     if (user.career_hours !== undefined) {
       fields.push('career_hours = ?');
       values.push(user.career_hours);
+    }
+    if (user.gemini_api_key !== undefined) {
+      fields.push('gemini_api_key = ?');
+      values.push(user.gemini_api_key);
     }
 
     if (fields.length > 0) {

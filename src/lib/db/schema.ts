@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS user (
   average_hours_target INTEGER DEFAULT 600,
   pension_target REAL,
   career_hours REAL DEFAULT 0,
+  gemini_api_key TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -120,6 +121,7 @@ export interface User {
   average_hours_target: number;
   pension_target: number | null;
   career_hours: number;
+  gemini_api_key: string | null;
   created_at: string;
 }
 

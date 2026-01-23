@@ -29,9 +29,9 @@
 - [x] Success animation on entry save
 
 ## Phase 4: Ship 🚧 IN PROGRESS
-- [ ] App icon design and generation
-- [ ] Splash screen design and generation
-- [ ] Configure resources for iOS and Android
+- [x] App icon design and generation
+- [x] Splash screen design and generation
+- [x] Configure resources for iOS and Android
 - [ ] Test development build on device/emulator
 - [ ] Production build configuration
 - [ ] App store metadata preparation

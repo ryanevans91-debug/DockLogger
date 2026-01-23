@@ -62,11 +62,22 @@ class DatabaseService {
   async execute(statement: string): Promise<void> {
     const db = await this.getDb();
     await db.execute(statement);
+
+    // Persist to IndexedDB on web platform
+    if (this.platform === 'web') {
+      await this.sqlite.saveToStore(DB_NAME);
+    }
   }
 
   async run(statement: string, values?: unknown[]): Promise<{ changes: number; lastId: number }> {
     const db = await this.getDb();
     const result = await db.run(statement, values);
+
+    // Persist to IndexedDB on web platform
+    if (this.platform === 'web') {
+      await this.sqlite.saveToStore(DB_NAME);
+    }
+
     return {
       changes: result.changes?.changes || 0,
       lastId: result.changes?.lastId || 0

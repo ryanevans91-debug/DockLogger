@@ -1,15 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { documents, documentCounts } from '$lib/stores';
+	import { documents, documentCounts, user } from '$lib/stores';
 	import { Filesystem, Directory } from '@capacitor/filesystem';
 	import type { Document } from '$lib/db';
+	import { parsePaystubWithGemini, getGeminiApiKey, type ParsedPaystubData } from '$lib/utils/gemini';
 
 	let loading = $state(true);
 	let selectedCategory = $state<string | null>(null);
 	let showUploadModal = $state(false);
 	let showVerifyModal = $state(false);
 	let uploadedFile = $state<{ name: string; data: string; mimeType: string } | null>(null);
-	let extractedData = $state<Record<string, string>>({});
+	let extractedData = $state<Record<string, string | number | null>>({});
+	let parsingWithAI = $state(false);
 	let docName = $state('');
 	let docCategory = $state('timesheet');
 	let docNotes = $state('');
@@ -51,27 +53,59 @@
 			// Auto-generate document name from filename
 			docName = file.name.replace(/\.[^/.]+$/, '');
 
-			// Try to extract data from the document (placeholder for OCR/parsing)
+			showUploadModal = false;
+
+			// Try to extract data from the document using AI
 			extractedData = await extractDocumentData(data, file.type);
 
 			// Show verification modal if data was extracted
 			if (Object.keys(extractedData).length > 0) {
 				showVerifyModal = true;
+			} else if (docCategory === 'pay_stub' && !getGeminiApiKey($user?.gemini_api_key)) {
+				// If it's a paystub but no API key, prompt user
+				alert('Add your Gemini API key in Settings to automatically extract paystub data.');
 			}
-
-			showUploadModal = false;
 		};
 		reader.readAsDataURL(file);
 	}
 
-	async function extractDocumentData(data: string, mimeType: string): Promise<Record<string, string>> {
-		// Placeholder for document parsing/OCR
-		// In a real implementation, this would use OCR or PDF parsing to extract:
-		// - Dates
-		// - Hours worked
-		// - Earnings amounts
-		// - Names
-		// For now, return empty object
+	async function extractDocumentData(data: string, mimeType: string): Promise<Record<string, string | number | null>> {
+		// Only process paystubs with AI
+		if (docCategory !== 'pay_stub') {
+			return {};
+		}
+
+		// Check if we have Gemini API key (user's or from env)
+		const apiKey = getGeminiApiKey($user?.gemini_api_key);
+		if (!apiKey) {
+			return {};
+		}
+
+		parsingWithAI = true;
+		try {
+			const result = await parsePaystubWithGemini(apiKey, data);
+			if (result.success && result.data && !Array.isArray(result.data)) {
+				const paystubData = result.data as ParsedPaystubData;
+				// Convert to display-friendly format
+				const extracted: Record<string, string | number | null> = {};
+				if (paystubData.gross_pay) extracted['Gross Pay'] = `$${paystubData.gross_pay.toFixed(2)}`;
+				if (paystubData.net_pay) extracted['Net Pay'] = `$${paystubData.net_pay.toFixed(2)}`;
+				if (paystubData.federal_tax) extracted['Federal Tax'] = `$${paystubData.federal_tax.toFixed(2)}`;
+				if (paystubData.provincial_tax) extracted['Provincial Tax'] = `$${paystubData.provincial_tax.toFixed(2)}`;
+				if (paystubData.cpp) extracted['CPP'] = `$${paystubData.cpp.toFixed(2)}`;
+				if (paystubData.ei) extracted['EI'] = `$${paystubData.ei.toFixed(2)}`;
+				if (paystubData.union_dues) extracted['Union Dues'] = `$${paystubData.union_dues.toFixed(2)}`;
+				if (paystubData.pension_contribution) extracted['Pension'] = `$${paystubData.pension_contribution.toFixed(2)}`;
+				if (paystubData.hours_worked) extracted['Hours Worked'] = paystubData.hours_worked;
+				if (paystubData.pay_period_start) extracted['Period Start'] = paystubData.pay_period_start;
+				if (paystubData.pay_period_end) extracted['Period End'] = paystubData.pay_period_end;
+				return extracted;
+			}
+		} catch (error) {
+			console.error('AI extraction error:', error);
+		} finally {
+			parsingWithAI = false;
+		}
 		return {};
 	}
 
