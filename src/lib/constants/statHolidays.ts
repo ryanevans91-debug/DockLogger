@@ -1,12 +1,49 @@
 // BC Statutory Holidays for ILWU Local 502
 // These dates include specific qualification periods
 
+import { statHolidayQueries } from '$lib/db/queries';
+
 export interface StatHoliday {
   name: string;
   date: string; // YYYY-MM-DD format
   qualificationStart: string; // Start of 30-day qualification window
   qualificationEnd: string; // End of 30-day qualification window
   payDate?: string; // When stat pay is received
+}
+
+// Cache for database-loaded holidays
+let dbHolidaysCache: Map<number, StatHoliday[]> = new Map();
+let cacheLoaded = false;
+
+// Load holidays from database into cache
+export async function loadStatHolidaysFromDb(): Promise<void> {
+  try {
+    const dbHolidays = await statHolidayQueries.getAll();
+    dbHolidaysCache = new Map();
+
+    for (const h of dbHolidays) {
+      const year = h.year;
+      if (!dbHolidaysCache.has(year)) {
+        dbHolidaysCache.set(year, []);
+      }
+      dbHolidaysCache.get(year)!.push({
+        name: h.name,
+        date: h.date,
+        qualificationStart: h.qualification_start,
+        qualificationEnd: h.qualification_end,
+        payDate: h.pay_date || undefined
+      });
+    }
+    cacheLoaded = true;
+  } catch (error) {
+    console.error('Failed to load stat holidays from database:', error);
+  }
+}
+
+// Get holidays from database cache for a year
+function getDbHolidaysForYear(year: number): StatHoliday[] | null {
+  if (!cacheLoaded) return null;
+  return dbHolidaysCache.get(year) || null;
 }
 
 // Function to get Easter Sunday date (used for Good Friday and Easter Monday)
@@ -144,7 +181,13 @@ const STAT_HOLIDAYS_2027: StatHoliday[] = [
 
 // Get stat holidays for a given year
 export function getStatHolidaysForYear(year: number): StatHoliday[] {
-  // Return hardcoded data for 2026 and 2027
+  // First check database cache
+  const dbHolidays = getDbHolidaysForYear(year);
+  if (dbHolidays && dbHolidays.length > 0) {
+    return dbHolidays;
+  }
+
+  // Fall back to hardcoded data for 2026 and 2027
   if (year === 2026) {
     return STAT_HOLIDAYS_2026;
   }

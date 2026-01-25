@@ -1,5 +1,5 @@
 import { database } from './database';
-import type { User, RatedJob, Entry } from './schema';
+import type { User, RatedJob, Entry, StatHolidayRecord } from './schema';
 
 // User queries
 export const userQueries = {
@@ -304,5 +304,52 @@ export const entryQueries = {
       [startDate, endDate]
     );
     return results[0]?.count || 0;
+  }
+};
+
+// Stat holidays queries
+export const statHolidayQueries = {
+  async getByYear(year: number): Promise<StatHolidayRecord[]> {
+    const results = await database.query<StatHolidayRecord>(
+      'SELECT * FROM stat_holidays WHERE year = ? ORDER BY date',
+      [year]
+    );
+    return results;
+  },
+
+  async getAll(): Promise<StatHolidayRecord[]> {
+    const results = await database.query<StatHolidayRecord>(
+      'SELECT * FROM stat_holidays ORDER BY date'
+    );
+    return results;
+  },
+
+  async addMany(holidays: Omit<StatHolidayRecord, 'id' | 'created_at'>[]): Promise<void> {
+    for (const holiday of holidays) {
+      await database.run(
+        `INSERT INTO stat_holidays (year, name, date, qualification_start, qualification_end, pay_date)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          holiday.year,
+          holiday.name,
+          holiday.date,
+          holiday.qualification_start,
+          holiday.qualification_end,
+          holiday.pay_date
+        ]
+      );
+    }
+  },
+
+  async deleteByYear(year: number): Promise<void> {
+    await database.run('DELETE FROM stat_holidays WHERE year = ?', [year]);
+  },
+
+  async hasYear(year: number): Promise<boolean> {
+    const results = await database.query<{ count: number }>(
+      'SELECT COUNT(*) as count FROM stat_holidays WHERE year = ?',
+      [year]
+    );
+    return (results[0]?.count || 0) > 0;
   }
 };

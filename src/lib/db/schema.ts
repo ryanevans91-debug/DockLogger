@@ -93,6 +93,20 @@ CREATE TABLE IF NOT EXISTS period_summaries (
   summary_data TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS stat_holidays (
+  id INTEGER PRIMARY KEY,
+  year INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  date TEXT NOT NULL,
+  qualification_start TEXT NOT NULL,
+  qualification_end TEXT NOT NULL,
+  pay_date TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_stat_holidays_year ON stat_holidays(year);
+CREATE INDEX IF NOT EXISTS idx_stat_holidays_date ON stat_holidays(date);
 `;
 
 // Initialize database with schema
@@ -187,6 +201,17 @@ export interface PeriodSummary {
   total_earnings: number;
   days_worked: number;
   summary_data: string | null;
+  created_at: string;
+}
+
+export interface StatHolidayRecord {
+  id: number;
+  year: number;
+  name: string;
+  date: string;
+  qualification_start: string;
+  qualification_end: string;
+  pay_date: string | null;
   created_at: string;
 }
 

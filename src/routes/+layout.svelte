@@ -5,6 +5,7 @@
 	import { onMount } from 'svelte';
 	import { database, initializeSchema } from '$lib/db';
 	import { user, ratedJobs, theme } from '$lib/stores';
+	import { loadStatHolidaysFromDb } from '$lib/constants/statHolidays';
 	import { page } from '$app/stores';
 	import { Capacitor } from '@capacitor/core';
 
@@ -48,6 +49,7 @@
 			console.log('Loading user data...');
 			await user.load();
 			await ratedJobs.load();
+			await loadStatHolidaysFromDb();
 
 			// Initialize theme
 			theme.init();

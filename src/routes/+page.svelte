@@ -1,14 +1,25 @@
 <script lang="ts">
-	import { user, userDisplayName, hasCompletedOnboarding, stats, periodSummaries, getCurrentHalfYearPeriod } from '$lib/stores';
+	import { user, userDisplayName, hasCompletedOnboarding, stats, periodSummaries, getCurrentHalfYearPeriod, entries } from '$lib/stores';
 	import { getAverageHoursStatus } from '$lib/utils';
 	import type { AverageHoursStatus } from '$lib/utils';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { Browser } from '@capacitor/browser';
+	import { parseTimesheetWithGemini, parseStatScheduleWithGemini, getGeminiApiKey, type ParsedTimesheetEntry } from '$lib/utils/gemini';
+	import { statHolidayQueries } from '$lib/db/queries';
+	import { loadStatHolidaysFromDb } from '$lib/constants/statHolidays';
 
 	let avgHoursStatus = $state<AverageHoursStatus | null>(null);
 	let loading = $state(true);
 	let currentPeriod = $state(getCurrentHalfYearPeriod());
+
+	// Data modal state
+	let showDataModal = $state(false);
+	let showImportModal = $state(false);
+	let importedData = $state<Array<{date: string; shift_type: string; hours: number; job_name: string; earnings?: number; location?: string; ship?: string}>>([]);
+	let importFileName = $state('');
+	let importing = $state(false);
+	let parsingWithAI = $state(false);
 
 	// Work pins data
 	interface WorkPins {
@@ -98,6 +109,186 @@
 			// Fallback for web
 			window.open(url, '_blank');
 		}
+	}
+
+	// Data import/export functions
+	async function handleFileImport(event: Event) {
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+
+		importFileName = file.name;
+		const isImage = file.type.startsWith('image/');
+		const isPdf = file.type === 'application/pdf';
+		const isCsv = file.name.endsWith('.csv');
+
+		const apiKey = getGeminiApiKey($user?.gemini_api_key);
+		if ((isImage || isPdf) && !apiKey) {
+			alert('Please add your Gemini API key in Settings to import images and PDFs.');
+			input.value = '';
+			return;
+		}
+
+		const reader = new FileReader();
+		reader.onload = async (e) => {
+			try {
+				if (isCsv) {
+					const content = e.target?.result as string;
+					importedData = parseCSV(content);
+					if (importedData.length > 0) {
+						showDataModal = false;
+						showImportModal = true;
+					} else {
+						alert('No valid data found in file.');
+					}
+				} else if (isImage || isPdf) {
+					parsingWithAI = true;
+					const base64 = e.target?.result as string;
+
+					// Try stat schedule first
+					const statResult = await parseStatScheduleWithGemini(apiKey, base64);
+					if (statResult.success && statResult.holidays && statResult.holidays.length > 0) {
+						// It's a stat schedule - save directly to database
+						const year = statResult.year!;
+						await statHolidayQueries.deleteByYear(year); // Replace existing
+						await statHolidayQueries.addMany(
+							statResult.holidays.map(h => ({
+								year,
+								name: h.name,
+								date: h.date,
+								qualification_start: h.qualification_start,
+								qualification_end: h.qualification_end,
+								pay_date: h.pay_date || null
+							}))
+						);
+						await loadStatHolidaysFromDb(); // Refresh cache
+						parsingWithAI = false;
+						showDataModal = false;
+						alert(`Imported ${statResult.holidays.length} stat holidays for ${year}!`);
+						return;
+					}
+
+					// Not a stat schedule, try timesheet
+					const result = await parseTimesheetWithGemini(apiKey, null, base64);
+					if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+						importedData = result.data as ParsedTimesheetEntry[];
+						parsingWithAI = false;
+						showDataModal = false;
+						showImportModal = true;
+					} else {
+						parsingWithAI = false;
+						alert('Could not recognize this document. Try a timesheet or stat schedule.');
+					}
+				} else {
+					alert('Unsupported file type. Please use CSV, PDF, or image files.');
+				}
+			} catch (error) {
+				console.error('Import error:', error);
+				alert('Failed to parse file. Please try again.');
+				parsingWithAI = false;
+			}
+		};
+
+		if (isImage || isPdf) {
+			reader.readAsDataURL(file);
+		} else {
+			reader.readAsText(file);
+		}
+		input.value = '';
+	}
+
+	function parseCSV(content: string): Array<{date: string; shift_type: string; hours: number; job_name: string; earnings?: number; location?: string; ship?: string}> {
+		const lines = content.trim().split('\n');
+		if (lines.length < 2) return [];
+
+		const headers = lines[0].toLowerCase().split(',').map(h => h.trim());
+		const results: Array<{date: string; shift_type: string; hours: number; job_name: string; earnings?: number; location?: string; ship?: string}> = [];
+
+		const dateIdx = headers.findIndex(h => h.includes('date'));
+		const shiftIdx = headers.findIndex(h => h.includes('shift'));
+		const hoursIdx = headers.findIndex(h => h.includes('hour'));
+		const jobIdx = headers.findIndex(h => h.includes('job') || h.includes('position') || h.includes('title'));
+		const earningsIdx = headers.findIndex(h => h.includes('earning') || h.includes('pay') || h.includes('amount'));
+		const locationIdx = headers.findIndex(h => h.includes('location') || h.includes('terminal') || h.includes('site'));
+		const shipIdx = headers.findIndex(h => h.includes('ship') || h.includes('vessel'));
+
+		for (let i = 1; i < lines.length; i++) {
+			const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
+			if (values.length < 2) continue;
+
+			const entry: any = {
+				date: dateIdx >= 0 ? values[dateIdx] : '',
+				shift_type: shiftIdx >= 0 ? values[shiftIdx]?.toLowerCase() || 'day' : 'day',
+				hours: hoursIdx >= 0 ? parseFloat(values[hoursIdx]) || 8 : 8,
+				job_name: jobIdx >= 0 ? values[jobIdx] : 'Imported'
+			};
+
+			if (earningsIdx >= 0 && values[earningsIdx]) {
+				entry.earnings = parseFloat(values[earningsIdx].replace(/[$,]/g, '')) || undefined;
+			}
+			if (locationIdx >= 0 && values[locationIdx]) {
+				entry.location = values[locationIdx];
+			}
+			if (shipIdx >= 0 && values[shipIdx]) {
+				entry.ship = values[shipIdx];
+			}
+
+			if (entry.date && !isNaN(Date.parse(entry.date))) {
+				if (entry.shift_type.includes('grave') || entry.shift_type.includes('night')) {
+					entry.shift_type = 'graveyard';
+				} else if (entry.shift_type.includes('after') || entry.shift_type.includes('pm') || entry.shift_type.includes('evening')) {
+					entry.shift_type = 'afternoon';
+				} else {
+					entry.shift_type = 'day';
+				}
+				results.push(entry);
+			}
+		}
+		return results;
+	}
+
+	async function confirmImport() {
+		if (importing || importedData.length === 0) return;
+
+		importing = true;
+		try {
+			let imported = 0;
+			for (const entry of importedData) {
+				await entries.add({
+					date: new Date(entry.date).toISOString().split('T')[0],
+					shift_type: entry.shift_type as 'day' | 'afternoon' | 'graveyard',
+					job_type: 'hall',
+					rated_job_id: null,
+					hall_job_name: entry.job_name,
+					hours: entry.hours,
+					location: entry.location || null,
+					ship: entry.ship || null,
+					notes: `Imported from ${importFileName}`,
+					earnings: entry.earnings || null
+				});
+				imported++;
+			}
+
+			alert(`Successfully imported ${imported} entries!`);
+			showImportModal = false;
+			importedData = [];
+		} catch (error) {
+			console.error('Import error:', error);
+			alert('Failed to import some entries. Please try again.');
+		} finally {
+			importing = false;
+		}
+	}
+
+	function cancelImport() {
+		showImportModal = false;
+		importedData = [];
+		importFileName = '';
+	}
+
+	function exportToCsv() {
+		showDataModal = false;
+		alert('CSV export coming soon!');
 	}
 </script>
 
@@ -245,23 +436,23 @@
 			</div>
 		</a>
 
-		<!-- WhatsApp/Telegram Share Card -->
-		<a href="/share" class="block card hover:bg-gray-50 transition-colors">
+		<!-- Data Card -->
+		<button onclick={() => showDataModal = true} class="block w-full card hover:bg-gray-50 transition-colors text-left">
 			<div class="flex items-center gap-3">
-				<div class="w-10 h-10 bg-primary-light rounded-lg flex items-center justify-center">
-					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-primary">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+				<div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-purple-600">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
 					</svg>
 				</div>
 				<div class="flex-1">
-					<h3 class="font-medium text-gray-900">WhatsApp / Telegram</h3>
-					<p class="text-sm text-gray-500">Share docs to work groups</p>
+					<h3 class="font-medium text-gray-900">Data</h3>
+					<p class="text-sm text-gray-500">Import, export & upload</p>
 				</div>
 				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-gray-400">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
 				</svg>
 			</div>
-		</a>
+		</button>
 
 		<!-- Camera Card -->
 		<a href="/camera" class="block card-elevated bg-blue-600 text-white">
@@ -276,3 +467,134 @@
 		</a>
 	{/if}
 </div>
+
+<!-- Data Modal -->
+{#if showDataModal}
+	<div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+		<div class="card w-full max-w-sm">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-lg font-semibold text-gray-900">Data</h2>
+				<button onclick={() => showDataModal = false} class="p-1 text-gray-500 hover:text-gray-700">
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+
+			<div class="space-y-3">
+				<!-- Import Timesheets -->
+				<label class="card w-full text-left flex items-center gap-3 cursor-pointer hover:bg-gray-50 transition-colors {parsingWithAI ? 'opacity-50 pointer-events-none' : ''}">
+					{#if parsingWithAI}
+						<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+					{:else}
+						<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-blue-500">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+						</svg>
+					{/if}
+					<div class="flex-1">
+						<p class="font-medium text-gray-900">{parsingWithAI ? 'Parsing with AI...' : 'Import Work Info'}</p>
+						<p class="text-sm text-gray-500">{parsingWithAI ? 'Extracting data' : 'Timesheets, stat schedules'}</p>
+					</div>
+					<input
+						type="file"
+						accept=".csv,.pdf,image/*"
+						onchange={handleFileImport}
+						disabled={parsingWithAI}
+						class="hidden"
+					/>
+				</label>
+
+				<!-- Export to CSV -->
+				<button
+					onclick={exportToCsv}
+					class="card w-full text-left flex items-center gap-3 hover:bg-gray-50 transition-colors"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-green-500">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+					</svg>
+					<div>
+						<p class="font-medium text-gray-900">Export to CSV</p>
+						<p class="text-sm text-gray-500">Download all entries</p>
+					</div>
+				</button>
+
+				<!-- Upload Paystub -->
+				<button
+					onclick={() => { showDataModal = false; goto('/documents'); }}
+					class="card w-full text-left flex items-center gap-3 hover:bg-gray-50 transition-colors"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-purple-500">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+					</svg>
+					<div>
+						<p class="font-medium text-gray-900">Upload Paystub</p>
+						<p class="text-sm text-gray-500">For net pay estimates</p>
+					</div>
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Import Verification Modal -->
+{#if showImportModal}
+	<div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+		<div class="card w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
+			<h2 class="text-lg font-semibold text-gray-900 mb-2">Verify Import</h2>
+			<p class="text-sm text-gray-600 mb-4">
+				Found {importedData.length} entries in {importFileName}
+			</p>
+
+			<div class="flex-1 overflow-y-auto mb-4 -mx-4 px-4">
+				<table class="w-full text-sm">
+					<thead class="bg-gray-50 sticky top-0">
+						<tr>
+							<th class="text-left py-2 px-2 font-medium text-gray-700">Date</th>
+							<th class="text-left py-2 px-2 font-medium text-gray-700">Shift</th>
+							<th class="text-left py-2 px-2 font-medium text-gray-700">Hours</th>
+							<th class="text-left py-2 px-2 font-medium text-gray-700">Job</th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-gray-100">
+						{#each importedData.slice(0, 20) as entry}
+							<tr>
+								<td class="py-2 px-2 text-gray-900">{entry.date}</td>
+								<td class="py-2 px-2 text-gray-600 capitalize">{entry.shift_type}</td>
+								<td class="py-2 px-2 text-gray-600">{entry.hours}</td>
+								<td class="py-2 px-2 text-gray-600 truncate max-w-[100px]">
+									{entry.job_name}
+									{#if entry.location || entry.ship}
+										<span class="block text-xs text-gray-400">{entry.location || ''}{entry.location && entry.ship ? ' - ' : ''}{entry.ship || ''}</span>
+									{/if}
+								</td>
+							</tr>
+						{/each}
+						{#if importedData.length > 20}
+							<tr>
+								<td colspan="4" class="py-2 px-2 text-center text-gray-500 italic">
+									...and {importedData.length - 20} more entries
+								</td>
+							</tr>
+						{/if}
+					</tbody>
+				</table>
+			</div>
+
+			<div class="grid grid-cols-2 gap-3 pt-4 border-t">
+				<button
+					onclick={cancelImport}
+					class="py-2 border border-gray-300 rounded-lg text-gray-700"
+				>
+					Cancel
+				</button>
+				<button
+					onclick={confirmImport}
+					disabled={importing}
+					class="py-2 bg-blue-600 text-white rounded-lg font-medium disabled:opacity-50"
+				>
+					{importing ? 'Importing...' : 'Import All'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}

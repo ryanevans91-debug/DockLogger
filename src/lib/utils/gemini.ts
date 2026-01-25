@@ -226,3 +226,91 @@ export async function testGeminiConnection(apiKey: string): Promise<boolean> {
     return false;
   }
 }
+
+// Stat holiday schedule parsing
+export interface ParsedStatHoliday {
+  name: string;
+  date: string;
+  qualification_start: string;
+  qualification_end: string;
+  pay_date?: string;
+}
+
+export interface StatScheduleResponse {
+  success: boolean;
+  year?: number;
+  holidays?: ParsedStatHoliday[];
+  error?: string;
+}
+
+export async function parseStatScheduleWithGemini(
+  apiKey: string,
+  imageBase64: string
+): Promise<StatScheduleResponse> {
+  const prompt = `You are extracting statutory holiday information from an ILWU (longshoremen union) schedule document.
+
+Extract ALL stat holidays shown with their:
+- name: Holiday name (e.g., "New Year's Day", "Family Day", "Good Friday")
+- date: The actual stat holiday date in YYYY-MM-DD format
+- qualification_start: Start date of the 30-day qualifying window in YYYY-MM-DD format
+- qualification_end: End date of the qualifying window in YYYY-MM-DD format
+- pay_date: When stat pay is received (YYYY-MM-DD), if shown
+
+The qualifying window is typically labeled as "30 Day Qualifying Period" or similar. Workers need to work 15 days within this window to get full stat pay.
+
+Also determine the YEAR these holidays are for.
+
+Return ONLY valid JSON in this exact format:
+{"year":2026,"holidays":[{"name":"New Year's Day","date":"2026-01-01","qualification_start":"2025-11-30","qualification_end":"2025-12-27","pay_date":"2026-01-08"}]}
+
+If you cannot parse the schedule, return: {"error":"Could not parse stat schedule"}`;
+
+  try {
+    const response = await callGemini(apiKey, prompt, imageBase64);
+
+    // Extract JSON from response
+    let jsonStr = response.trim();
+    if (jsonStr.startsWith('```json')) {
+      jsonStr = jsonStr.slice(7);
+    }
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.slice(3);
+    }
+    if (jsonStr.endsWith('```')) {
+      jsonStr = jsonStr.slice(0, -3);
+    }
+    jsonStr = jsonStr.trim();
+
+    const data = JSON.parse(jsonStr);
+
+    if (data.error) {
+      return { success: false, error: data.error };
+    }
+
+    // Validate the parsed data
+    if (!data.year || !data.holidays || !Array.isArray(data.holidays)) {
+      return { success: false, error: 'Invalid data format' };
+    }
+
+    // Validate each holiday has required fields
+    const validHolidays = data.holidays.filter((h: ParsedStatHoliday) =>
+      h.name && h.date && h.qualification_start && h.qualification_end
+    );
+
+    if (validHolidays.length === 0) {
+      return { success: false, error: 'No valid holidays found' };
+    }
+
+    return {
+      success: true,
+      year: data.year,
+      holidays: validHolidays
+    };
+  } catch (error) {
+    console.error('Gemini stat schedule parsing error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to parse stat schedule'
+    };
+  }
+}

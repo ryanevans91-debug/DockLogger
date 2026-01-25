@@ -1,15 +1,6 @@
 <script lang="ts">
-	import { user, ratedJobs, theme, colorThemes, type ThemeMode, type ColorTheme, entries } from '$lib/stores';
+	import { user, ratedJobs, theme, colorThemes, type ThemeMode, type ColorTheme } from '$lib/stores';
 	import { SHIFTS } from '$lib/db';
-	import { goto } from '$app/navigation';
-	import { parseTimesheetWithGemini, testGeminiConnection, getGeminiApiKey, type ParsedTimesheetEntry } from '$lib/utils/gemini';
-
-	// Import modal state
-	let showImportModal = $state(false);
-	let importedData = $state<Array<{date: string; shift_type: string; hours: number; job_name: string; earnings?: number; location?: string; ship?: string}>>([]);
-	let importFileName = $state('');
-	let importing = $state(false);
-	let parsingWithAI = $state(false);
 
 	// Form state - populated from user store
 	let lastName = $state($user?.last_name || '');
@@ -112,176 +103,16 @@
 			alert('Failed to delete job. Please try again.');
 		}
 	}
-
-	function exportToCsv() {
-		// TODO: Implement CSV export
-		alert('CSV export coming soon!');
-	}
-
-	async function handleFileImport(event: Event) {
-		const input = event.target as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file) return;
-
-		importFileName = file.name;
-		const isImage = file.type.startsWith('image/');
-		const isPdf = file.type === 'application/pdf';
-		const isCsv = file.name.endsWith('.csv');
-
-		// Check if we have Gemini API key for non-CSV files
-		const apiKey = getGeminiApiKey(geminiApiKey);
-		if ((isImage || isPdf) && !apiKey) {
-			alert('Please add your Gemini API key in settings to import images and PDFs. You can get a free key from Google AI Studio.');
-			input.value = '';
-			return;
-		}
-
-		// Read file content
-		const reader = new FileReader();
-		reader.onload = async (e) => {
-			try {
-				if (isCsv) {
-					// Parse CSV directly
-					const content = e.target?.result as string;
-					importedData = parseCSV(content);
-				} else if (isImage || isPdf) {
-					// Use Gemini to parse image/PDF
-					parsingWithAI = true;
-					const base64 = e.target?.result as string;
-
-					const result = await parseTimesheetWithGemini(apiKey, null, base64);
-
-					if (result.success && Array.isArray(result.data)) {
-						importedData = result.data as ParsedTimesheetEntry[];
-					} else {
-						alert(result.error || 'Failed to parse file with AI. Please try a clearer image or CSV format.');
-						parsingWithAI = false;
-						return;
-					}
-					parsingWithAI = false;
-				} else {
-					alert('Unsupported file type. Please use CSV, PDF, or image files.');
-					return;
-				}
-
-				// Show verification modal if we got data
-				if (importedData.length > 0) {
-					showImportModal = true;
-				} else {
-					alert('No valid timesheet data found in file.');
-				}
-			} catch (error) {
-				console.error('Import error:', error);
-				alert('Failed to parse file. Please try again.');
-				parsingWithAI = false;
-			}
-		};
-
-		// Read as appropriate format
-		if (isImage || isPdf) {
-			reader.readAsDataURL(file);
-		} else {
-			reader.readAsText(file);
-		}
-
-		// Reset input
-		input.value = '';
-	}
-
-	function parseCSV(content: string): Array<{date: string; shift_type: string; hours: number; job_name: string; earnings?: number}> {
-		const lines = content.trim().split('\n');
-		if (lines.length < 2) return [];
-
-		const headers = lines[0].toLowerCase().split(',').map(h => h.trim());
-		const results: Array<{date: string; shift_type: string; hours: number; job_name: string; earnings?: number}> = [];
-
-		// Try to map common column names
-		const dateIdx = headers.findIndex(h => h.includes('date'));
-		const shiftIdx = headers.findIndex(h => h.includes('shift'));
-		const hoursIdx = headers.findIndex(h => h.includes('hour'));
-		const jobIdx = headers.findIndex(h => h.includes('job') || h.includes('position') || h.includes('title'));
-		const earningsIdx = headers.findIndex(h => h.includes('earning') || h.includes('pay') || h.includes('amount'));
-
-		for (let i = 1; i < lines.length; i++) {
-			const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-			if (values.length < 2) continue;
-
-			const entry: any = {
-				date: dateIdx >= 0 ? values[dateIdx] : '',
-				shift_type: shiftIdx >= 0 ? values[shiftIdx]?.toLowerCase() || 'day' : 'day',
-				hours: hoursIdx >= 0 ? parseFloat(values[hoursIdx]) || 8 : 8,
-				job_name: jobIdx >= 0 ? values[jobIdx] : 'Imported'
-			};
-
-			if (earningsIdx >= 0 && values[earningsIdx]) {
-				entry.earnings = parseFloat(values[earningsIdx].replace(/[$,]/g, '')) || undefined;
-			}
-
-			// Only add if we have a valid date
-			if (entry.date && !isNaN(Date.parse(entry.date))) {
-				// Normalize shift type
-				if (entry.shift_type.includes('grave') || entry.shift_type.includes('night')) {
-					entry.shift_type = 'graveyard';
-				} else if (entry.shift_type.includes('after') || entry.shift_type.includes('pm') || entry.shift_type.includes('evening')) {
-					entry.shift_type = 'afternoon';
-				} else {
-					entry.shift_type = 'day';
-				}
-				results.push(entry);
-			}
-		}
-
-		return results;
-	}
-
-	async function confirmImport() {
-		if (importing || importedData.length === 0) return;
-
-		importing = true;
-		try {
-			let imported = 0;
-			for (const entry of importedData) {
-				await entries.add({
-					date: new Date(entry.date).toISOString().split('T')[0],
-					shift_type: entry.shift_type as 'day' | 'afternoon' | 'graveyard',
-					job_type: 'hall',
-					rated_job_id: null,
-					hall_job_name: entry.job_name,
-					hours: entry.hours,
-					location: null,
-					ship: null,
-					notes: `Imported from ${importFileName}`,
-					earnings: entry.earnings || null
-				});
-				imported++;
-			}
-
-			alert(`Successfully imported ${imported} entries!`);
-			showImportModal = false;
-			importedData = [];
-		} catch (error) {
-			console.error('Import error:', error);
-			alert('Failed to import some entries. Please try again.');
-		} finally {
-			importing = false;
-		}
-	}
-
-	function cancelImport() {
-		showImportModal = false;
-		importedData = [];
-		importFileName = '';
-	}
 </script>
 
 <div class="p-4 pb-24 space-y-6">
 	<header class="mb-2">
-		<h1 class="text-2xl font-bold text-gray-900">Settings</h1>
+		<h1 class="text-2xl font-bold text-gray-900">Profile</h1>
 	</header>
 
 	<!-- Profile Section -->
 	<section>
-		<h2 class="text-lg font-semibold text-gray-900 mb-3">Profile</h2>
+		<h2 class="text-lg font-semibold text-gray-900 mb-3">Personal Info</h2>
 		<div class="card space-y-4">
 			<div class="grid grid-cols-2 gap-3">
 				<div>
@@ -347,142 +178,6 @@
 			</div>
 		</div>
 	</section>
-
-	<!-- Appearance Section -->
-	<section>
-		<h2 class="text-lg font-semibold text-gray-900 mb-3">Appearance</h2>
-		<div class="space-y-3">
-			<!-- Theme Mode -->
-			<div class="card">
-				<label class="block font-medium text-gray-900 mb-2">Theme Mode</label>
-				<div class="grid grid-cols-2 gap-2">
-					{#each [['light', 'Light'], ['dark', 'Dark']] as [mode, label]}
-						<button
-							onclick={() => theme.setMode(mode as ThemeMode)}
-							class="py-2 rounded-lg text-sm font-medium transition-colors
-								{$theme.mode === mode
-									? 'bg-blue-600 text-white'
-									: 'bg-gray-100 text-gray-700 hover:bg-gray-200'}"
-						>
-							{label}
-						</button>
-					{/each}
-				</div>
-			</div>
-
-			<!-- Color Theme -->
-			<div class="card py-2">
-				<label class="block font-medium text-gray-900 mb-2 text-sm">Accent Color</label>
-				<div class="grid grid-cols-5 gap-2">
-					{#each Object.entries(colorThemes) as [key, { primary }]}
-						<button
-							onclick={() => theme.setColorTheme(key as ColorTheme)}
-							class="flex justify-center"
-						>
-							<div
-								class="w-7 h-7 rounded-full transition-all {$theme.colorTheme === key ? 'ring-2 ring-offset-1 scale-110' : 'hover:scale-105'}"
-								style="background-color: {primary}; --tw-ring-color: {primary}; {key === 'white' ? 'border: 1px solid #d1d5db;' : ''}"
-							></div>
-						</button>
-					{/each}
-				</div>
-			</div>
-		</div>
-	</section>
-
-	<!-- Hourly Rates Section -->
-	<section>
-		<h2 class="text-lg font-semibold text-gray-900 mb-3">Hourly Rates</h2>
-		<div class="space-y-3">
-			<div class="card">
-				<div class="flex justify-between items-center mb-2">
-					<span class="font-medium text-gray-900">{SHIFTS.day.name}</span>
-					<span class="text-sm text-gray-500">{SHIFTS.day.start} - {SHIFTS.day.end}</span>
-				</div>
-				<div class="relative">
-					<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-					<input
-						type="number"
-						step="0.01"
-						bind:value={dayRate}
-						placeholder="0.00"
-						class="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-					/>
-				</div>
-			</div>
-			<div class="card">
-				<div class="flex justify-between items-center mb-2">
-					<span class="font-medium text-gray-900">{SHIFTS.afternoon.name}</span>
-					<span class="text-sm text-gray-500">{SHIFTS.afternoon.start} - {SHIFTS.afternoon.end}</span>
-				</div>
-				<div class="relative">
-					<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-					<input
-						type="number"
-						step="0.01"
-						bind:value={afternoonRate}
-						placeholder="0.00"
-						class="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-					/>
-				</div>
-			</div>
-			<div class="card">
-				<div class="flex justify-between items-center mb-2">
-					<span class="font-medium text-gray-900">{SHIFTS.graveyard.name}</span>
-					<span class="text-sm text-gray-500">{SHIFTS.graveyard.start} - {SHIFTS.graveyard.end}</span>
-				</div>
-				<div class="relative">
-					<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-					<input
-						type="number"
-						step="0.01"
-						bind:value={graveyardRate}
-						placeholder="0.00"
-						class="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-					/>
-				</div>
-			</div>
-		</div>
-	</section>
-
-	<!-- Goals Section -->
-	<section>
-		<h2 class="text-lg font-semibold text-gray-900 mb-3">Goals</h2>
-		<div class="space-y-3">
-			<div class="card">
-				<label for="avgHours" class="block font-medium text-gray-900 mb-1">Average Hours Target</label>
-				<input
-					id="avgHours"
-					type="number"
-					bind:value={averageHoursTarget}
-					class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-				/>
-			</div>
-			<div class="card">
-				<label for="pension" class="block font-medium text-gray-900 mb-1">Pensionable Year Target</label>
-				<div class="relative">
-					<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-					<input
-						id="pension"
-						type="number"
-						step="0.01"
-						bind:value={pensionTarget}
-						placeholder="0.00"
-						class="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-					/>
-				</div>
-			</div>
-		</div>
-	</section>
-
-	<!-- Save Profile Button -->
-	<button
-		onclick={saveProfile}
-		disabled={saving}
-		class="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold disabled:opacity-50"
-	>
-		{saving ? 'Saving...' : 'Save Profile'}
-	</button>
 
 	<!-- Rated Jobs Section -->
 	<section>
@@ -574,61 +269,141 @@
 		{/if}
 	</section>
 
-	<!-- Data Section -->
+	<!-- Hourly Rates Section -->
 	<section>
-		<h2 class="text-lg font-semibold text-gray-900 mb-3">Data</h2>
+		<h2 class="text-lg font-semibold text-gray-900 mb-3">Hourly Rates</h2>
 		<div class="space-y-3">
-			<!-- Import Data -->
-			<label class="card w-full text-left flex items-center gap-3 cursor-pointer hover:bg-gray-50 transition-colors {parsingWithAI ? 'opacity-50 pointer-events-none' : ''}">
-				{#if parsingWithAI}
-					<div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-				{:else}
-					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-blue-500">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-					</svg>
-				{/if}
-				<div class="flex-1">
-					<p class="font-medium text-gray-900">{parsingWithAI ? 'Parsing with AI...' : 'Import Timesheets'}</p>
-					<p class="text-sm text-gray-500">{parsingWithAI ? 'Extracting timesheet data' : 'Upload CSV, PDF, or images from other apps'}</p>
+			<div class="card">
+				<div class="flex justify-between items-center mb-2">
+					<span class="font-medium text-gray-900">{SHIFTS.day.name}</span>
+					<span class="text-sm text-gray-500">{SHIFTS.day.start} - {SHIFTS.day.end}</span>
 				</div>
-				<input
-					type="file"
-					accept=".csv,.pdf,image/*"
-					onchange={handleFileImport}
-					disabled={parsingWithAI}
-					class="hidden"
-				/>
-			</label>
-
-			<!-- Export Data -->
-			<button
-				onclick={exportToCsv}
-				class="card w-full text-left flex items-center gap-3 hover:bg-gray-50 transition-colors"
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-green-500">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-				</svg>
-				<div>
-					<p class="font-medium text-gray-900">Export to CSV</p>
-					<p class="text-sm text-gray-500">Download all your entries</p>
+				<div class="relative">
+					<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+					<input
+						type="number"
+						step="0.01"
+						bind:value={dayRate}
+						placeholder="0.00"
+						class="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+					/>
 				</div>
-			</button>
-
-			<!-- Paystub Upload Info -->
-			<button
-				onclick={() => goto('/documents')}
-				class="card w-full text-left flex items-center gap-3 hover:bg-gray-50 transition-colors"
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-purple-500">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-				</svg>
-				<div>
-					<p class="font-medium text-gray-900">Upload Paystub</p>
-					<p class="text-sm text-gray-500">Upload paystub for more accurate net pay estimates</p>
+			</div>
+			<div class="card">
+				<div class="flex justify-between items-center mb-2">
+					<span class="font-medium text-gray-900">{SHIFTS.afternoon.name}</span>
+					<span class="text-sm text-gray-500">{SHIFTS.afternoon.start} - {SHIFTS.afternoon.end}</span>
 				</div>
-			</button>
+				<div class="relative">
+					<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+					<input
+						type="number"
+						step="0.01"
+						bind:value={afternoonRate}
+						placeholder="0.00"
+						class="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+					/>
+				</div>
+			</div>
+			<div class="card">
+				<div class="flex justify-between items-center mb-2">
+					<span class="font-medium text-gray-900">{SHIFTS.graveyard.name}</span>
+					<span class="text-sm text-gray-500">{SHIFTS.graveyard.start} - {SHIFTS.graveyard.end}</span>
+				</div>
+				<div class="relative">
+					<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+					<input
+						type="number"
+						step="0.01"
+						bind:value={graveyardRate}
+						placeholder="0.00"
+						class="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+					/>
+				</div>
+			</div>
 		</div>
 	</section>
+
+	<!-- Goals Section -->
+	<section>
+		<h2 class="text-lg font-semibold text-gray-900 mb-3">Goals</h2>
+		<div class="space-y-3">
+			<div class="card">
+				<label for="avgHours" class="block font-medium text-gray-900 mb-1">Average Hours Target</label>
+				<input
+					id="avgHours"
+					type="number"
+					bind:value={averageHoursTarget}
+					class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+				/>
+			</div>
+			<div class="card">
+				<label for="pension" class="block font-medium text-gray-900 mb-1">Pensionable Year Target</label>
+				<div class="relative">
+					<span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+					<input
+						id="pension"
+						type="number"
+						step="0.01"
+						bind:value={pensionTarget}
+						placeholder="0.00"
+						class="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+					/>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Appearance Section -->
+	<section>
+		<h2 class="text-lg font-semibold text-gray-900 mb-3">Appearance</h2>
+		<div class="space-y-3">
+			<!-- Theme Mode -->
+			<div class="card">
+				<label class="block font-medium text-gray-900 mb-2">Theme Mode</label>
+				<div class="grid grid-cols-2 gap-2">
+					{#each [['light', 'Light'], ['dark', 'Dark']] as [mode, label]}
+						<button
+							onclick={() => theme.setMode(mode as ThemeMode)}
+							class="py-2 rounded-lg text-sm font-medium transition-colors
+								{$theme.mode === mode
+									? 'bg-blue-600 text-white'
+									: 'bg-gray-100 text-gray-700 hover:bg-gray-200'}"
+						>
+							{label}
+						</button>
+					{/each}
+				</div>
+			</div>
+
+			<!-- Color Theme -->
+			<div class="card py-2">
+				<label class="block font-medium text-gray-900 mb-2 text-sm">Accent Color</label>
+				<div class="grid grid-cols-5 gap-2">
+					{#each Object.entries(colorThemes) as [key, { primary }]}
+						<button
+							onclick={() => theme.setColorTheme(key as ColorTheme)}
+							class="flex justify-center"
+						>
+							<div
+								class="w-7 h-7 rounded-full transition-all {$theme.colorTheme === key ? 'ring-2 ring-offset-1 scale-110' : 'hover:scale-105'}"
+								style="background-color: {primary}; --tw-ring-color: {primary}; {key === 'white' ? 'border: 1px solid #d1d5db;' : ''}"
+							></div>
+						</button>
+					{/each}
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Save Profile Button -->
+	<button
+		onclick={saveProfile}
+		disabled={saving}
+		class="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold disabled:opacity-50"
+	>
+		{saving ? 'Saving...' : 'Save Profile'}
+	</button>
 
 	<!-- App Info -->
 	<section class="text-center text-sm text-gray-400 pt-4">
@@ -636,62 +411,3 @@
 		<p>Made for ILWU Local 502</p>
 	</section>
 </div>
-
-<!-- Import Verification Modal -->
-{#if showImportModal}
-	<div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-		<div class="card w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
-			<h2 class="text-lg font-semibold text-gray-900 mb-2">Verify Import</h2>
-			<p class="text-sm text-gray-600 mb-4">
-				Found {importedData.length} entries in {importFileName}
-			</p>
-
-			<!-- Preview Table -->
-			<div class="flex-1 overflow-y-auto mb-4 -mx-4 px-4">
-				<table class="w-full text-sm">
-					<thead class="bg-gray-50 sticky top-0">
-						<tr>
-							<th class="text-left py-2 px-2 font-medium text-gray-700">Date</th>
-							<th class="text-left py-2 px-2 font-medium text-gray-700">Shift</th>
-							<th class="text-left py-2 px-2 font-medium text-gray-700">Hours</th>
-							<th class="text-left py-2 px-2 font-medium text-gray-700">Job</th>
-						</tr>
-					</thead>
-					<tbody class="divide-y divide-gray-100">
-						{#each importedData.slice(0, 20) as entry}
-							<tr>
-								<td class="py-2 px-2 text-gray-900">{entry.date}</td>
-								<td class="py-2 px-2 text-gray-600 capitalize">{entry.shift_type}</td>
-								<td class="py-2 px-2 text-gray-600">{entry.hours}</td>
-								<td class="py-2 px-2 text-gray-600 truncate max-w-[100px]">{entry.job_name}</td>
-							</tr>
-						{/each}
-						{#if importedData.length > 20}
-							<tr>
-								<td colspan="4" class="py-2 px-2 text-center text-gray-500 italic">
-									...and {importedData.length - 20} more entries
-								</td>
-							</tr>
-						{/if}
-					</tbody>
-				</table>
-			</div>
-
-			<div class="grid grid-cols-2 gap-3 pt-4 border-t">
-				<button
-					onclick={cancelImport}
-					class="py-2 border border-gray-300 rounded-lg text-gray-700"
-				>
-					Cancel
-				</button>
-				<button
-					onclick={confirmImport}
-					disabled={importing}
-					class="py-2 bg-blue-600 text-white rounded-lg font-medium disabled:opacity-50"
-				>
-					{importing ? 'Importing...' : 'Import All'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
