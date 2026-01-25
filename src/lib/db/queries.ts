@@ -105,7 +105,8 @@ export const ratedJobQueries = {
     return results.map(job => ({
       ...job,
       has_extra_hour: Boolean(job.has_extra_hour),
-      is_big_hour: Boolean(job.is_big_hour)
+      is_big_hour: Boolean(job.is_big_hour),
+      has_meal_hour: Boolean(job.has_meal_hour)
     }));
   },
 
@@ -118,15 +119,16 @@ export const ratedJobQueries = {
     return {
       ...results[0],
       has_extra_hour: Boolean(results[0].has_extra_hour),
-      is_big_hour: Boolean(results[0].is_big_hour)
+      is_big_hour: Boolean(results[0].is_big_hour),
+      has_meal_hour: Boolean(results[0].has_meal_hour)
     };
   },
 
   async create(job: Omit<RatedJob, 'id' | 'created_at'>): Promise<number> {
     const result = await database.run(
-      `INSERT INTO rated_jobs (name, has_extra_hour, is_big_hour)
-       VALUES (?, ?, ?)`,
-      [job.name, job.has_extra_hour ? 1 : 0, job.is_big_hour ? 1 : 0]
+      `INSERT INTO rated_jobs (name, has_extra_hour, is_big_hour, has_meal_hour)
+       VALUES (?, ?, ?, ?)`,
+      [job.name, job.has_extra_hour ? 1 : 0, job.is_big_hour ? 1 : 0, job.has_meal_hour ? 1 : 0]
     );
     return result.lastId;
   },
@@ -146,6 +148,10 @@ export const ratedJobQueries = {
     if (job.is_big_hour !== undefined) {
       fields.push('is_big_hour = ?');
       values.push(job.is_big_hour ? 1 : 0);
+    }
+    if (job.has_meal_hour !== undefined) {
+      fields.push('has_meal_hour = ?');
+      values.push(job.has_meal_hour ? 1 : 0);
     }
 
     if (fields.length > 0) {

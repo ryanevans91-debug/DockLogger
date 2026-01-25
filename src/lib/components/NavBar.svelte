@@ -84,7 +84,7 @@
         class:add-button={item.href === '/entry'}
       >
         {#if item.href === '/entry'}
-          <div class="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center -mt-4 shadow-lg">
+          <div class="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center -mt-2 shadow-lg">
             <span class="text-white">
               {@html active ? item.activeIcon : item.icon}
             </span>

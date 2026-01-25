@@ -2,11 +2,18 @@
 	import { onMount } from 'svelte';
 	import { documents, documentCounts, user } from '$lib/stores';
 	import { Filesystem, Directory } from '@capacitor/filesystem';
+	import { Share } from '@capacitor/share';
 	import type { Document } from '$lib/db';
 	import { parsePaystubWithGemini, getGeminiApiKey, type ParsedPaystubData } from '$lib/utils/gemini';
 
 	let loading = $state(true);
 	let selectedCategory = $state<string | null>(null);
+
+	// Multi-select state
+	let selectMode = $state(false);
+	let selectedDocs = $state<number[]>([]);
+	let sharing = $state(false);
+	let longPressTriggered = $state(false);
 	let showUploadModal = $state(false);
 	let showVerifyModal = $state(false);
 	let uploadedFile = $state<{ name: string; data: string; mimeType: string } | null>(null);
@@ -181,26 +188,109 @@
 			year: 'numeric'
 		});
 	}
+
+	// Multi-select functions
+	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function toggleSelectMode() {
+		selectMode = !selectMode;
+		if (!selectMode) {
+			selectedDocs = [];
+		}
+	}
+
+	function toggleDocSelection(docId: number) {
+		if (selectedDocs.includes(docId)) {
+			selectedDocs = selectedDocs.filter(id => id !== docId);
+		} else {
+			selectedDocs = [...selectedDocs, docId];
+		}
+	}
+
+	function handlePointerDown(docId: number) {
+		longPressTriggered = false;
+		longPressTimer = setTimeout(() => {
+			longPressTriggered = true;
+			// Enter select mode and select this doc
+			if (!selectMode) {
+				selectMode = true;
+			}
+			if (!selectedDocs.includes(docId)) {
+				selectedDocs = [...selectedDocs, docId];
+			}
+		}, 500); // 500ms for long press
+	}
+
+	function handlePointerUp(docId: number) {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+		// If long press wasn't triggered and we're in select mode, toggle selection
+		if (!longPressTriggered && selectMode) {
+			toggleDocSelection(docId);
+		}
+	}
+
+	function handlePointerLeave() {
+		// Cancel long press if pointer leaves element
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+	}
+
+	function selectAll() {
+		const filtered = filteredDocuments($documents);
+		selectedDocs = filtered.map(d => d.id);
+	}
+
+	function clearSelection() {
+		selectedDocs = [];
+	}
+
+	async function shareSelected() {
+		if (selectedDocs.length === 0 || sharing) return;
+
+		sharing = true;
+		try {
+			const docs = $documents.filter(d => selectedDocs.includes(d.id));
+			const filePaths = docs.map(d => d.file_path);
+
+			await Share.share({
+				files: filePaths,
+				dialogTitle: `Share ${docs.length} document${docs.length !== 1 ? 's' : ''}`
+			});
+
+			// Reset selection after share
+			selectedDocs = [];
+			selectMode = false;
+		} catch (error) {
+			console.error('Share error:', error);
+			// User may have cancelled, don't show error
+		} finally {
+			sharing = false;
+		}
+	}
 </script>
 
-<div class="p-4 pb-24 space-y-4">
-	<header class="flex items-center justify-between mb-4">
-		<div class="flex items-center gap-3">
+<div class="p-4 pb-40 space-y-4">
+	<header class="flex items-center gap-3 mb-4">
+		{#if selectMode}
+			<button onclick={toggleSelectMode} class="p-2 -ml-2 text-gray-500 hover:text-gray-700">
+				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+				</svg>
+			</button>
+			<h1 class="text-2xl font-bold text-gray-900">{selectedDocs.length} selected</h1>
+		{:else}
 			<a href="/" class="p-2 -ml-2 text-gray-500 hover:text-gray-700">
 				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
 				</svg>
 			</a>
 			<h1 class="text-2xl font-bold text-gray-900">Documents</h1>
-		</div>
-		<button
-			onclick={() => showUploadModal = true}
-			class="p-2 bg-blue-600 text-white rounded-lg"
-		>
-			<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-			</svg>
-		</button>
+		{/if}
 	</header>
 
 	{#if loading}
@@ -208,75 +298,148 @@
 			<div class="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
 		</div>
 	{:else}
-		<!-- Category Filter -->
-		<div class="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
-			<button
-				onclick={() => selectedCategory = null}
-				class="px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors
-					{selectedCategory === null ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}"
-			>
+		<!-- Filter + Actions -->
+		<div class="flex items-center gap-2">
+			<span class="px-3 py-1.5 bg-blue-600 text-white rounded-full text-sm font-medium">
 				All ({$documents.length})
-			</button>
-			{#each categories as cat}
-				{#if $documentCounts[cat.value] > 0}
+			</span>
+			<div class="flex-1"></div>
+			{#if selectMode}
+				<button
+					onclick={selectedDocs.length === filteredDocuments($documents).length ? clearSelection : selectAll}
+					class="px-3 py-1.5 text-sm font-medium text-blue-600 whitespace-nowrap"
+				>
+					{selectedDocs.length === filteredDocuments($documents).length ? 'Clear' : 'Select All'}
+				</button>
+			{:else}
+				{#if $documents.length > 0}
 					<button
-						onclick={() => selectedCategory = cat.value}
-						class="px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors
-							{selectedCategory === cat.value ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}"
+						onclick={toggleSelectMode}
+						class="px-3 py-1.5 text-sm font-medium text-gray-600 whitespace-nowrap"
 					>
-						{cat.label} ({$documentCounts[cat.value]})
+						Select
 					</button>
 				{/if}
-			{/each}
+				<button
+					onclick={() => showUploadModal = true}
+					class="p-2 bg-blue-600 text-white rounded-lg flex-shrink-0"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+					</svg>
+				</button>
+			{/if}
 		</div>
 
 		<!-- Documents List -->
 		{#if filteredDocuments($documents).length === 0}
-			<div class="card text-center py-8">
+			<button
+				onclick={() => showUploadModal = true}
+				class="card text-center py-8 w-full hover:bg-gray-50 transition-colors cursor-pointer"
+			>
 				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12 mx-auto text-gray-300 mb-3">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
 				</svg>
 				<p class="text-gray-500">No documents yet</p>
-				<p class="text-sm text-gray-400 mt-1">Use the camera to capture documents</p>
-			</div>
+				<p class="text-sm text-gray-400 mt-1">Tap to add documents</p>
+			</button>
 		{:else}
-			<div class="space-y-3">
+			<div class="grid grid-cols-5 gap-2">
 				{#each filteredDocuments($documents) as doc}
-					<div class="card flex items-center gap-3">
-						<div class="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
+					<button
+						onpointerdown={() => handlePointerDown(doc.id)}
+						onpointerup={() => handlePointerUp(doc.id)}
+						onpointerleave={handlePointerLeave}
+						oncontextmenu={(e: Event) => e.preventDefault()}
+						class="aspect-square bg-white rounded-lg border border-gray-200 flex flex-col items-center justify-center p-1 transition-colors select-none relative overflow-hidden
+							{selectMode && selectedDocs.includes(doc.id) ? 'ring-2 ring-blue-500 bg-blue-50' : ''}"
+					>
+						{#if selectMode && selectedDocs.includes(doc.id)}
+							<div class="absolute top-1 right-1 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center z-10">
+								<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="white" class="w-3 h-3">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+								</svg>
+							</div>
+						{/if}
+						<div class="flex-1 flex items-center justify-center">
 							{#if doc.type === 'pdf'}
-								<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-red-500">
+								<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-red-500">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
 								</svg>
 							{:else}
-								<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-blue-500">
+								<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-blue-500">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
 								</svg>
 							{/if}
 						</div>
-						<div class="flex-1 min-w-0">
-							<h3 class="font-medium text-gray-900 truncate">{doc.name}</h3>
-							<p class="text-sm text-gray-500">{formatDate(doc.created_at)}</p>
-							{#if doc.category}
-								<span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-									{categories.find(c => c.value === doc.category)?.label || doc.category}
-								</span>
-							{/if}
-						</div>
-						<button
-							onclick={() => deleteDocument(doc)}
-							class="p-2 text-red-500 hover:text-red-700"
-						>
-							<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-							</svg>
-						</button>
-					</div>
+						<p class="text-xs text-gray-700 text-center truncate w-full px-0.5">{doc.name}</p>
+						{#if !selectMode}
+							<button
+								onclick={(e) => { e.stopPropagation(); deleteDocument(doc); }}
+								class="absolute top-0 right-0 p-1 text-red-500 hover:text-red-700 bg-white/80 rounded-bl"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3 h-3">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+								</svg>
+							</button>
+						{/if}
+					</button>
 				{/each}
 			</div>
 		{/if}
 	{/if}
 </div>
+
+<!-- Floating Share Button (when selecting) -->
+{#if selectMode && selectedDocs.length > 0}
+	<div class="fixed bottom-36 left-4 right-4 z-40">
+		<button
+			onclick={shareSelected}
+			disabled={sharing}
+			class="w-full py-4 bg-green-600 text-white rounded-xl font-semibold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+		>
+			{#if sharing}
+				<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+				<span>Opening share...</span>
+			{:else}
+				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
+				</svg>
+				<span>Share {selectedDocs.length} document{selectedDocs.length !== 1 ? 's' : ''}</span>
+			{/if}
+		</button>
+	</div>
+{/if}
+
+<!-- Share Card (always visible above nav) -->
+{#if !loading && $documents.length > 0}
+	<div class="fixed bottom-20 left-4 right-4 z-30">
+		<a
+			href="/share"
+			class="card flex items-center justify-between py-3 px-4 shadow-lg border border-gray-200"
+		>
+			<span class="font-medium text-gray-900">Share to</span>
+			<div class="flex items-center gap-3">
+				<!-- WhatsApp -->
+				<div class="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" class="w-5 h-5">
+						<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+					</svg>
+				</div>
+				<!-- Telegram -->
+				<div class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" class="w-5 h-5">
+						<path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+					</svg>
+				</div>
+				<!-- Arrow -->
+				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 text-gray-400">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+				</svg>
+			</div>
+		</a>
+	</div>
+{/if}
 
 <!-- Upload Modal -->
 {#if showUploadModal}

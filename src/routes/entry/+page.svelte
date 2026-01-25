@@ -269,8 +269,8 @@
 					{#each $ratedJobs as job}
 						<option value={job.id}>
 							{job.name}
-							{#if job.has_extra_hour || job.is_big_hour}
-								({job.has_extra_hour ? '+1hr' : ''}{job.has_extra_hour && job.is_big_hour ? ', ' : ''}{job.is_big_hour ? '1.5x' : ''})
+							{#if job.has_extra_hour || job.is_big_hour || job.has_meal_hour}
+								({job.has_extra_hour ? '+1hr' : ''}{job.has_extra_hour && (job.is_big_hour || job.has_meal_hour) ? ', ' : ''}{job.is_big_hour ? '1.5x' : ''}{job.is_big_hour && job.has_meal_hour ? ', ' : ''}{job.has_meal_hour ? '+meal' : ''})
 							{/if}
 						</option>
 					{/each}
@@ -347,7 +347,7 @@
 </div>
 
 <!-- Earnings preview & save button -->
-<div class="fixed bottom-16 left-0 right-0 p-4 bg-white border-t border-gray-200">
+<div class="fixed left-0 right-0 p-4 bg-white border-t border-gray-200 bottom-navbar">
 	{#if isTimeOff()}
 		<div class="flex items-center justify-center mb-3">
 			<span class="text-xl font-medium {jobType === 'vacation' ? 'text-amber-600' : 'text-red-600'}">
@@ -386,5 +386,9 @@
 
 	.animate-bounce-in {
 		animation: bounce-in 0.3s ease-out;
+	}
+
+	.bottom-navbar {
+		bottom: calc(4rem + env(safe-area-inset-bottom));
 	}
 </style>
