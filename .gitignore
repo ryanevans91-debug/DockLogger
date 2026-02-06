@@ -18,6 +18,10 @@ Thumbs.db
 !.env.example
 !.env.test
 
+# Signing keys
+*.keystore
+*.jks
+
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
