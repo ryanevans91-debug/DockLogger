@@ -122,6 +122,39 @@
       line-height: 1.4;
     }
 
+    .donate {
+      margin-top: 2.5rem;
+      padding: 1.25rem;
+      background: #111827;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+    }
+
+    .donate-text {
+      font-size: 0.9rem;
+      color: #94a3b8;
+      margin-bottom: 0.75rem;
+    }
+
+    .btn-donate {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.625rem 1.5rem;
+      background: #0070ba;
+      color: #fff;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .btn-donate:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0, 112, 186, 0.4);
+    }
+
     footer {
       margin-top: 3rem;
       font-size: 0.8rem;
@@ -133,7 +166,7 @@
   <div class="container">
     <img src="icon.png" alt="DockLogger" class="icon">
     <h1>DockLogger</h1>
-    <p class="tagline">Track your shifts, earnings, and dispatches.<br>Built for ILWU longshoremen.</p>
+    <p class="tagline">Track your shifts, earnings, and dispatches.<br>Built for ILWU longshoremen. Free to use.</p>
 
     <div class="downloads">
       <a href="https://github.com/ryanevans91-debug/DockLogger/releases/download/v1.0/DockLoggerApp.apk" class="btn btn-android">
@@ -163,6 +196,14 @@
         <div class="feature-title">Calendar View</div>
         <div class="feature-desc">Visual calendar of all your shifts and dispatch history.</div>
       </div>
+    </div>
+
+    <div class="donate">
+      <p class="donate-text">Enjoy the app? We appreciate any donations!</p>
+      <a href="https://www.paypal.com/paypalme/ryanidrisca" class="btn-donate">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944 2.04A.859.859 0 0 1 5.79 1.28h7.557c2.578 0 4.378 1.357 4.073 4.252-.403 3.834-2.998 5.164-5.973 5.164H9.403l-1.109 6.773a.641.641 0 0 1-.633.534H7.076zM19.442 6.79c-.401 3.83-2.998 5.86-5.973 5.86h-1.41l-1.11 6.773a.428.428 0 0 1-.422.356h-2.06l-.108.66a.428.428 0 0 0 .422.5h2.96a.642.642 0 0 0 .633-.534l.72-4.392c.177-1.084 1.1-1.9 2.2-1.9h.66c3.053 0 5.19-2.065 5.69-5.168.273-1.7-.132-3.013-1.202-3.155z"/></svg>
+        PayPal
+      </a>
     </div>
 
     <footer>&copy; 2026 DockLogger</footer>
