@@ -94,7 +94,39 @@
 		csvInputRef?.click();
 	}
 
+	const PAYSTUB_WEEKLY_LIMIT = 10;
+
+	function getPaystubUploadsThisWeek(): number {
+		const now = new Date();
+		const startOfWeek = new Date(now);
+		startOfWeek.setDate(now.getDate() - now.getDay());
+		startOfWeek.setHours(0, 0, 0, 0);
+		const key = 'paystub_uploads';
+		try {
+			const stored = JSON.parse(localStorage.getItem(key) || '[]') as number[];
+			const thisWeek = stored.filter(ts => ts >= startOfWeek.getTime());
+			localStorage.setItem(key, JSON.stringify(thisWeek));
+			return thisWeek.length;
+		} catch {
+			return 0;
+		}
+	}
+
+	function recordPaystubUpload() {
+		const key = 'paystub_uploads';
+		try {
+			const stored = JSON.parse(localStorage.getItem(key) || '[]') as number[];
+			stored.push(Date.now());
+			localStorage.setItem(key, JSON.stringify(stored));
+		} catch { /* ignore */ }
+	}
+
 	function triggerPaystubUpload() {
+		const uploadsThisWeek = getPaystubUploadsThisWeek();
+		if (uploadsThisWeek >= PAYSTUB_WEEKLY_LIMIT) {
+			alert(`You've reached the limit of ${PAYSTUB_WEEKLY_LIMIT} paystub uploads per week. Please try again next week.`);
+			return;
+		}
 		paystubInputRef?.click();
 	}
 
@@ -122,6 +154,7 @@
 				console.log('Paystub result:', result);
 
 				if (result.success && result.data && !Array.isArray(result.data)) {
+					recordPaystubUpload();
 					const extracted = result.data as any;
 					const lineItems = Array.isArray(extracted.line_items) ? extracted.line_items : [];
 					const totalHours = extracted.total_hours || extracted.hours_worked;

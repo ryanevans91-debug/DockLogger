@@ -1,5 +1,11 @@
 apply plugin: 'com.android.application'
 
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localProperties.load(new FileInputStream(localPropertiesFile))
+}
+
 android {
     namespace = "com.docklogger.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -19,9 +25,9 @@ android {
     signingConfigs {
         release {
             storeFile file('docklogger.keystore')
-            storePassword 'docklogger502'
+            storePassword localProperties['KEYSTORE_PASSWORD'] ?: ''
             keyAlias 'docklogger'
-            keyPassword 'docklogger502'
+            keyPassword localProperties['KEY_PASSWORD'] ?: ''
         }
     }
     buildTypes {
