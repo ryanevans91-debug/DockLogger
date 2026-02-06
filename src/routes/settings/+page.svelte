@@ -767,10 +767,21 @@
 		{saving ? 'Saving...' : 'Save Profile'}
 	</button>
 
-	<!-- App Info -->
-	<section class="text-center text-sm text-gray-400 pt-4">
-		<p>DockLogger v1.0.0</p>
-		<p>Made for ILWU Local 502</p>
+	<!-- Donate -->
+	<section class="text-center pt-4">
+		<div class="bg-gray-50 rounded-xl p-4">
+			<p class="text-sm text-gray-500 mb-3">Enjoy the app? We appreciate any donations!</p>
+			<a
+				href="https://www.paypal.me/ryanmidris"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="inline-flex items-center gap-2 px-5 py-2.5 bg-[#0070ba] text-white rounded-lg font-semibold text-sm"
+			>
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944 2.04A.859.859 0 0 1 5.79 1.28h7.557c2.578 0 4.378 1.357 4.073 4.252-.403 3.834-2.998 5.164-5.973 5.164H9.403l-1.109 6.773a.641.641 0 0 1-.633.534H7.076zM19.442 6.79c-.401 3.83-2.998 5.86-5.973 5.86h-1.41l-1.11 6.773a.428.428 0 0 1-.422.356h-2.06l-.108.66a.428.428 0 0 0 .422.5h2.96a.642.642 0 0 0 .633-.534l.72-4.392c.177-1.084 1.1-1.9 2.2-1.9h.66c3.053 0 5.19-2.065 5.69-5.168.273-1.7-.132-3.013-1.202-3.155z"/></svg>
+				PayPal
+			</a>
+		</div>
+		<p class="text-sm text-gray-400 mt-3">DockLogger v1.0.0</p>
 	</section>
 </div>
 
